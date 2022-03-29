@@ -1,6 +1,7 @@
 #pragma once 
 
 #include <vmprofiles.hpp>
+#include <vmctx.hpp>
 #include <memory>
 #include <variant>
 
@@ -20,6 +21,8 @@
 #include <llvm/Transforms/Scalar/GVN.h> 
 #include <llvm/IR/LegacyPassManager.h>
 #include <llvm/Passes/PassBuilder.h>
+#include <llvm/IR/InlineAsm.h>
+#include <llvm/Support/Alignment.h>
 
 //for x86 complie
 #include "llvm/Support/Host.h" 
@@ -44,18 +47,77 @@ namespace lifters {
 	class _cvmp2
 	{
 	public:
-		_cvmp2(LLVMContext& context, IRBuilder<>& builder, Module* llvm_module) :context(context), builder(builder), llvm_module(llvm_module) {
+		_cvmp2(LLVMContext& context, IRBuilder<>& builder, Module* llvm_module,vm::ctx_t& vmctx) :context(context), builder(builder), llvm_module(llvm_module),vmctx(vmctx) {
 
 			Function* main = Function::Create(FunctionType::get(Type::getVoidTy(context), {}, false), GlobalValue::LinkageTypes::ExternalLinkage, "main", *llvm_module);
 
 			auto bb = BasicBlock::Create(context, "entry", main);
 			builder.SetInsertPoint(bb);
 
+			//
+		    //vm-entry的时候会push很多常用寄存器,同样也会不断的调用stregq到context中
+		    //这一段应该也是要搞的,不然llvm不认识context中的某一项到底是哪个寄存器,也没有办法执行优化
+			//常用寄存器加flag一共18个
+			// rax rbx rcx rdx 
+			// rsi rdi rip rsp rbp 
+			// r8-r15
+			// rflags
+			// 除了rip都是要保存的
+			//
+			std::string asm_str;
+			char buffer[256]{};
+			for (auto& i : vmctx.vm_entry)
+			{
+				if (i.instr.mnemonic == ZYDIS_MNEMONIC_PUSH || i.instr.mnemonic == ZYDIS_MNEMONIC_PUSHFQ)
+				{
+					vm::util::print(i.instr, buffer);
+
+					//如果是push一个内存地址的值
+					if (i.instr.operands[0].type == ZYDIS_OPERAND_TYPE_MEMORY) {
+						asm_str.append(buffer).append(";");
+						asm_str.append("mov rax,0;");
+						continue;
+					}
+					asm_str.append(buffer).append(";");
+				}
+			}
+
+			asm_str.append("mov rbp, rsp;");
+
+			llvm::InlineAsm* inlineAsm = llvm::InlineAsm::get(llvm::FunctionType::get(Type::getVoidTy(context), false), asm_str, "", false, false, llvm::InlineAsm::AD_Intel);
+
+			//insert asm 
+			builder.CreateCall(inlineAsm);
+
 
 			//
 			//mov     [rax+rdi], rdx(rax最大已知0xb8)
-			//0xb8/8+1 = 24  创建24个8字节虚拟寄存器 (多创建也没问题的,顶多没用到后面被llvm优化)
+			//0xb8/8+1 = 24  创建24个8字节虚拟寄存器
 			//
+			//sub rsp,0x140(0xc0+0x80)
+			/*
+			 _____________
+			|
+			|
+			|
+			|VM_CONTEXT			-> 0xC0  
+			|
+			|
+			|_____________
+			|
+			|VM_STACK			-> 0x80
+			|
+			|_____________      -> RBP (virtual stack start)
+			|
+			|
+			|
+			|COMMON REGISRER    ->
+			|
+			|
+			|_____________
+		
+			*/
+
 
 			for (int i = 0; i < 24; ++i) 
 			{
@@ -65,12 +127,17 @@ namespace lifters {
 			}
 
 			//创建堆栈
-			Type* byte_array_type = ArrayType::get(Type::getInt8Ty(context), 0x80);
-			virtual_stack = builder.CreateAlloca(byte_array_type, 0, "vsp");
-
-
-
 			
+			//单独开辟0x80
+
+			//Type* byte_array_type = ArrayType::get(Type::getInt8Ty(context), 0x80);
+			//virtual_stack = builder.CreateAlloca(byte_array_type, 0, "vsp");
+
+
+
+
+
+
 
 		}
 
@@ -116,13 +183,15 @@ namespace lifters {
 		std::unique_ptr<Module> llvm_module;
 		std::vector<AllocaInst*> virtual_registers;
 		Value* virtual_stack;
+		const vm::ctx_t& vmctx;
+		
 		
 	};
 
 	struct lifters
 	{
 		vm::handler::mnemonic_t mnemonic;  //用来定位一个vm handler对应的lifter
-		std::function<void(IRBuilder<>&, std::variant<uint64_t, uint32_t, uint16_t, uint8_t>, std::variant<uint64_t, uint32_t, uint16_t, uint8_t>, std::variant<uint64_t, uint32_t, uint16_t, uint8_t>)> hf;
+		std::function<void(_cvmp2& vmp2, std::variant<uint64_t, uint32_t, uint16_t, uint8_t>, std::variant<uint64_t, uint32_t, uint16_t, uint8_t>, std::variant<uint64_t, uint32_t, uint16_t, uint8_t>)> hf;
 	};
 
 	lifters sregq
@@ -132,29 +201,54 @@ namespace lifters {
 		//param1(context index)
 		//param2(value to store,8byte) 
 		//
-		[](IRBuilder<> & builder, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param1, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param2, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param3) {
+		[](_cvmp2& vmp2, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param1, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param2, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param3) {
 
-			uint8_t idx = std::get<uint8_t>(param1);
+			assert(std::get<uint8_t>(param1) < 0xb8);
+
+			uint8_t idx = std::get<uint8_t>(param1) / 8; 
+			
 			uint64_t value_to_be_stored = std::get<uint64_t>(param2);
 
-			
 
+			llvm::AllocaInst* vreg = vmp2.virtual_registers[idx];
 
-
-
-
-
+			vmp2.builder.CreateStore(llvm::ConstantInt::get(Type::getInt64Ty(vmp2.context),llvm::APInt(64,value_to_be_stored)), vreg);
 }
 	};
 
 	lifters vmexit
 	{
 		vm::handler::VMEXIT,
-		[](IRBuilder<>& builder, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param1, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param2, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param3) {
+		[](_cvmp2& vmp2, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param1, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param2, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param3) {
+
+		auto iter = std::find_if(vmp2.vmctx.vm_handlers.begin(),vmp2.vmctx.vm_handlers.end(),[&](vm::handler::handler_t h) {
+			if (h.profile->mnemonic == vm::handler::VMEXIT)
+				return true;
+			else
+				return false;
+			});
+
+		if (iter == vmp2.vmctx.vm_handlers.end())
+			throw std::runtime_error("not have vmexit handler\n");
+		
+		std::string asm_str;
+		char buffer[256]{};
+		for (auto& i : iter->instrs)
+		{
+			vm::util::print(i.instr, buffer);
+			if (i.instr.mnemonic == ZYDIS_MNEMONIC_POP || i.instr.mnemonic == ZYDIS_MNEMONIC_POPFQ)
+			{
+				asm_str.append(buffer).append(";");
+			}
+		}
 
 
-		builder.CreateRetVoid();
-		builder.ClearInsertionPoint();
+		llvm::InlineAsm* inlineAsm = llvm::InlineAsm::get(llvm::FunctionType::get(Type::getVoidTy(vmp2.context), false), asm_str, "", false, false, llvm::InlineAsm::AD_Intel);
+
+		vmp2.builder.CreateCall(inlineAsm);
+
+		vmp2.builder.CreateRetVoid();
+		vmp2.builder.ClearInsertionPoint();
 
 	}
 
