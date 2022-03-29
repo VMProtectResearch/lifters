@@ -49,7 +49,8 @@ namespace lifters {
 	public:
 		_cvmp2(LLVMContext& context, IRBuilder<>& builder, Module* llvm_module,vm::ctx_t& vmctx) :context(context), builder(builder), llvm_module(llvm_module),vmctx(vmctx) {
 
-			Function* main = Function::Create(FunctionType::get(Type::getVoidTy(context), {}, false), GlobalValue::LinkageTypes::ExternalLinkage, "main", *llvm_module);
+			//void(*)(void)
+			main = Function::Create(FunctionType::get(Type::getVoidTy(context), {}, false), GlobalValue::LinkageTypes::ExternalLinkage, "main", *llvm_module);
 
 			auto bb = BasicBlock::Create(context, "entry", main);
 			builder.SetInsertPoint(bb);
@@ -82,7 +83,8 @@ namespace lifters {
 				}
 			}
 
-			asm_str.append("mov rbp, rsp;");
+			asm_str.append("mov rbp,rsp;");
+
 
 			llvm::InlineAsm* inlineAsm = llvm::InlineAsm::get(llvm::FunctionType::get(Type::getVoidTy(context), false), asm_str, "", false, false, llvm::InlineAsm::AD_Intel);
 
@@ -126,12 +128,50 @@ namespace lifters {
 				builder.CreateStore(ConstantInt::get(Type::getInt64Ty(context), APInt(64, i)), virtual_registers[i]);
 			}
 
+			FunctionCallee returnaddress = llvm_module->getOrInsertFunction("returnaddress", FunctionType::get(PointerType::getInt8PtrTy(context), IntegerType::get(context, 32)));
+			if (!returnaddress)
+			{
+				throw std::runtime_error("no function named r eturnaddress");
+			}
+			builder.CreateCall(returnaddress, {});
+
+
 			//创建堆栈
 			
-			//单独开辟0x80
-
-			//Type* byte_array_type = ArrayType::get(Type::getInt8Ty(context), 0x80);
-			//virtual_stack = builder.CreateAlloca(byte_array_type, 0, "vsp");
+			/* llvm complier (stack)
+			
+			 _______________          
+			|
+			|
+			|
+			|
+			|
+			|
+			|COMMON REGISRER
+			|
+			|
+			|
+			|
+			|_______________
+			|
+			|
+			|
+			|VM_CONTEXT
+			|
+			|
+			|_______________
+			|
+			|
+			|
+			|
+			|
+			|
+			|_______________
+			
+			
+			
+			*/
+			
 
 
 
@@ -141,9 +181,28 @@ namespace lifters {
 
 		}
 
+		void add_optimize()
+		{
+			std::unique_ptr<llvm::legacy::FunctionPassManager> fpm = std::make_unique<llvm::legacy::FunctionPassManager>(&(*llvm_module));
+
+			//some optimizes
+
+			fpm->add(llvm::createPromoteMemoryToRegisterPass());
+			fpm->add(llvm::createInstructionCombiningPass());
+			fpm->add(llvm::createReassociatePass());
+			fpm->add(llvm::createGVNPass());
+			fpm->add(llvm::createCFGSimplificationPass());
+			fpm->run(*main);
+		}
+
 		//https://releases.llvm.org/8.0.0/docs/tutorial/LangImpl08.html#full-code-listing
 		void complie()
 		{
+			//enable optimize
+			
+			//add_optimize();
+
+
 			std::string target_triple = llvm::sys::getDefaultTargetTriple();
 
 			llvm_module->setTargetTriple(target_triple);
@@ -178,11 +237,20 @@ namespace lifters {
 			std::copy(obj.begin(), obj.end(), oi);
 		}
 
+		void insert_asm_locally(std::string& asm_str)
+		{
+			llvm::InlineAsm* inlineAsm = llvm::InlineAsm::get(llvm::FunctionType::get(Type::getVoidTy(context), false), asm_str, "", false, false, llvm::InlineAsm::AD_Intel);
+
+			builder.CreateCall(inlineAsm);
+		}
+
 		LLVMContext& context;
 		IRBuilder<>& builder;
 		std::unique_ptr<Module> llvm_module;
+		llvm::Function* main;
 		std::vector<AllocaInst*> virtual_registers;
 		Value* virtual_stack;
+		Value* stack;
 		const vm::ctx_t& vmctx;
 		
 		
@@ -194,6 +262,8 @@ namespace lifters {
 		std::function<void(_cvmp2& vmp2, std::variant<uint64_t, uint32_t, uint16_t, uint8_t>, std::variant<uint64_t, uint32_t, uint16_t, uint8_t>, std::variant<uint64_t, uint32_t, uint16_t, uint8_t>)> hf;
 	};
 
+	//pop rax
+	//mov ctx[x],rax
 	lifters sregq
 	{
 		vm::handler::SREGQ,
@@ -203,16 +273,10 @@ namespace lifters {
 		//
 		[](_cvmp2& vmp2, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param1, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param2, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param3) {
 
-			assert(std::get<uint8_t>(param1) < 0xb8);
-
-			uint8_t idx = std::get<uint8_t>(param1) / 8; 
-			
-			uint64_t value_to_be_stored = std::get<uint64_t>(param2);
-
-
-			llvm::AllocaInst* vreg = vmp2.virtual_registers[idx];
-
-			vmp2.builder.CreateStore(llvm::ConstantInt::get(Type::getInt64Ty(vmp2.context),llvm::APInt(64,value_to_be_stored)), vreg);
+		//param check
+		assert(std::get<uint8_t>(param1) <= 0xb8);
+		
+		
 }
 	};
 
@@ -221,7 +285,7 @@ namespace lifters {
 		vm::handler::VMEXIT,
 		[](_cvmp2& vmp2, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param1, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param2, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param3) {
 
-		auto iter = std::find_if(vmp2.vmctx.vm_handlers.begin(),vmp2.vmctx.vm_handlers.end(),[&](vm::handler::handler_t h) {
+		auto iter = std::find_if(vmp2.vmctx.vm_handlers.begin(),vmp2.vmctx.vm_handlers.end(),[](vm::handler::handler_t h) {
 			if (h.profile->mnemonic == vm::handler::VMEXIT)
 				return true;
 			else
@@ -231,7 +295,7 @@ namespace lifters {
 		if (iter == vmp2.vmctx.vm_handlers.end())
 			throw std::runtime_error("not have vmexit handler\n");
 		
-		std::string asm_str;
+		std::string asm_str("mov rsp,rbp;");
 		char buffer[256]{};
 		for (auto& i : iter->instrs)
 		{
@@ -254,10 +318,52 @@ namespace lifters {
 
 	};
 
+	lifters lconstq
+	{
+		
+		vm::handler::LCONSTQ,
+		//param1 (const value to be loaded)
+		[](_cvmp2& vmp2, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param1, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param2, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param3)
+		{
+		
+			
+		}
+	};
+
+	lifters lconstdwsxq
+	{
+		vm::handler::LCONSTDWSXQ,
+		[](_cvmp2& vmp2, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param1, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param2, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param3)
+		{
+}
+	};
+
+	lifters readdw
+	{
+		vm::handler::READDW,
+		[](_cvmp2& vmp2, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param1, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param2, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param3)
+		{
+
+	}
+	};
+
+	lifters writedw
+	{
+		vm::handler::WRITEDW,
+		[](_cvmp2& vmp2, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param1, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param2, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param3)
+		{
+
+	}
+	};
+
 	std::map<vm::handler::mnemonic_t, lifters> _h_map
 	{
 		{vm::handler::SREGQ,sregq},
 		{vm::handler::VMEXIT,vmexit},
+		{vm::handler::LCONSTQ,lconstq},
+		{vm::handler::LCONSTDWSXQ,lconstdwsxq},
+		{vm::handler::READDW,readdw},
+		{vm::handler::WRITEDW,writedw},
 	};
 	
 
