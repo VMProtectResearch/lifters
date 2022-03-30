@@ -49,8 +49,8 @@ namespace lifters {
 	public:
 		_cvmp2(LLVMContext& context, IRBuilder<>& builder, Module* llvm_module,vm::ctx_t& vmctx) :context(context), builder(builder), llvm_module(llvm_module),vmctx(vmctx) {
 
-			//void(*)(void)
-			main = Function::Create(FunctionType::get(Type::getVoidTy(context), {}, false), GlobalValue::LinkageTypes::ExternalLinkage, "main", *llvm_module);
+			//void(*)(int64)
+			main = Function::Create(FunctionType::get(Type::getVoidTy(context), {Type::getInt64Ty(context)}, false), GlobalValue::LinkageTypes::ExternalLinkage, "main", *llvm_module);
 
 			auto bb = BasicBlock::Create(context, "entry", main);
 			builder.SetInsertPoint(bb);
@@ -98,7 +98,7 @@ namespace lifters {
 			//
 			//sub rsp,0x140(0xc0+0x80)
 			/*
-			 _____________
+			 _____________   PE文件中真实的堆栈图
 			|
 			|
 			|
@@ -118,6 +118,37 @@ namespace lifters {
 			|
 			|_____________
 		
+			________________       llvm编译后生成的堆栈图 
+			|
+			|
+			|
+			|
+			|
+			|
+			|COMMON REGISRER
+			|
+			|
+			|
+			|
+			|_______________
+			|
+			|
+			|
+			|VM_CONTEXT
+			|
+			|
+			|_______________
+			|
+			|
+			|
+			|VM_STACK(暂时不用，挪到最上面去了)
+			|
+			|
+			|_______________
+			
+			
+
+
 			*/
 
 
@@ -125,16 +156,12 @@ namespace lifters {
 			{
 				virtual_registers.push_back(builder.CreateAlloca(llvm::IntegerType::get(context, 64), nullptr, (std::string("vreg") + std::to_string(i)).c_str()));
 
-				builder.CreateStore(ConstantInt::get(Type::getInt64Ty(context), APInt(64, i)), virtual_registers[i]);
+				//builder.CreateStore(ConstantInt::get(Type::getInt64Ty(context), APInt(64, i)), virtual_registers[i]);
 			}
 
-			FunctionCallee returnaddress = llvm_module->getOrInsertFunction("returnaddress", FunctionType::get(PointerType::getInt8PtrTy(context), IntegerType::get(context, 32)));
-			if (!returnaddress)
-			{
-				throw std::runtime_error("no function named r eturnaddress");
-			}
-			builder.CreateCall(returnaddress, {});
-
+			insert_asm_locally("mov rcx,rsp;");
+			// i64
+			stack = main->getArg(0); //get rcx
 
 			//创建堆栈
 			
@@ -237,7 +264,7 @@ namespace lifters {
 			std::copy(obj.begin(), obj.end(), oi);
 		}
 
-		void insert_asm_locally(std::string& asm_str)
+		void insert_asm_locally(std::string asm_str)
 		{
 			llvm::InlineAsm* inlineAsm = llvm::InlineAsm::get(llvm::FunctionType::get(Type::getVoidTy(context), false), asm_str, "", false, false, llvm::InlineAsm::AD_Intel);
 
@@ -249,8 +276,7 @@ namespace lifters {
 		std::unique_ptr<Module> llvm_module;
 		llvm::Function* main;
 		std::vector<AllocaInst*> virtual_registers;
-		Value* virtual_stack;
-		Value* stack;
+		Value* stack; 
 		const vm::ctx_t& vmctx;
 		
 		
@@ -262,8 +288,6 @@ namespace lifters {
 		std::function<void(_cvmp2& vmp2, std::variant<uint64_t, uint32_t, uint16_t, uint8_t>, std::variant<uint64_t, uint32_t, uint16_t, uint8_t>, std::variant<uint64_t, uint32_t, uint16_t, uint8_t>)> hf;
 	};
 
-	//pop rax
-	//mov ctx[x],rax
 	lifters sregq
 	{
 		vm::handler::SREGQ,
@@ -273,11 +297,22 @@ namespace lifters {
 		//
 		[](_cvmp2& vmp2, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param1, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param2, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param3) {
 
-		//param check
-		assert(std::get<uint8_t>(param1) <= 0xb8);
+		uint8_t idx = std::get<uint8_t>(param1) / 8;
+
+		//[rcx] [rsp]
+		Value* dqValue = vmp2.builder.CreateLoad(Type::getInt64Ty(vmp2.context), vmp2.builder.CreateIntToPtr(vmp2.stack, PointerType::getInt64PtrTy(vmp2.context)));
+
+		if (!dqValue)
+			throw std::runtime_error("cant CreateLoad\n");
+
+		//[ctx]=[rcx]
+		vmp2.builder.CreateStore(dqValue, vmp2.virtual_registers.at(idx));
+
+		//add rsp(rcx) ,8
+		vmp2.stack = vmp2.builder.CreateAdd(vmp2.stack, ConstantInt::get(Type::getInt64Ty(vmp2.context), APInt(64, 8)));
 		
-		
-}
+	
+	}
 	};
 
 	lifters vmexit
@@ -295,7 +330,7 @@ namespace lifters {
 		if (iter == vmp2.vmctx.vm_handlers.end())
 			throw std::runtime_error("not have vmexit handler\n");
 		
-		std::string asm_str("mov rsp,rbp;");
+		std::string asm_str("mov rsp,rcx;");
 		char buffer[256]{};
 		for (auto& i : iter->instrs)
 		{
