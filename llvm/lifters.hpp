@@ -25,11 +25,11 @@
 #include <llvm/Support/Alignment.h>
 
 //for x86 complie
-#include "llvm/Support/Host.h" 
-#include "llvm/MC/TargetRegistry.h" 
-#include "llvm/Target/TargetOptions.h"
-#include "llvm/Target/TargetMachine.h"
-#include "llvm/Object/ObjectFile.h"
+#include <llvm/Support/Host.h>
+#include <llvm/MC/TargetRegistry.h>
+#include <llvm/Target/TargetOptions.h>
+#include <llvm/Target/TargetMachine.h>
+#include <llvm/Object/ObjectFile.h>
 
 using namespace llvm;
 
@@ -231,7 +231,7 @@ namespace lifters {
 		{
 			//enable optimize
 			
-			add_optimize();
+			//add_optimize();
 
 
 			std::string target_triple = llvm::sys::getDefaultTargetTriple();
@@ -289,7 +289,7 @@ namespace lifters {
 	struct lifters
 	{
 		vm::handler::mnemonic_t mnemonic;  //用来定位一个vm handler对应的lifter
-		std::function<void(_cvmp2& vmp2, std::variant<uint64_t, uint32_t, uint16_t, uint8_t>, std::variant<uint64_t, uint32_t, uint16_t, uint8_t>, std::variant<uint64_t, uint32_t, uint16_t, uint8_t>)> hf;
+		std::function<void(_cvmp2& vmp2, std::variant<uint64_t, uint32_t, uint16_t, uint8_t>)> hf;
 	};
 
 	lifters sregq
@@ -297,9 +297,8 @@ namespace lifters {
 		vm::handler::SREGQ,
 		//
 		//param1(context index)
-		//param2(value to store,8byte) 
 		//
-		[](_cvmp2& vmp2, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param1, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param2, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param3) {
+		[](_cvmp2& vmp2, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param1) {
 
 		uint8_t idx = std::get<uint8_t>(param1) / 8;
 
@@ -315,10 +314,34 @@ namespace lifters {
 	}
 	};
 
+	lifters sregdw
+	{
+		vm::handler::SREGDW,
+		[](_cvmp2& vmp2, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param1) {
+			
+		uint8_t idx = std::get<uint8_t>(param1) / 8;
+
+		//mov     edx, [rbp+0]
+		auto dwValue = vmp2.builder.CreateLoad(Type::getInt32Ty(vmp2.context),vmp2.builder.CreateIntToPtr(vmp2.stack,PointerType::getInt32PtrTy(vmp2.context)));
+
+		//add     rbp, 4
+		vmp2.builder.CreateAdd(vmp2.stack, vmp2.builder.getInt8(4));
+
+		//mov     [rax+rdi], edx
+		auto dqValue = vmp2.builder.CreateIntCast(dwValue, Type::getInt64Ty(vmp2.context), false);
+		vmp2.builder.CreateStore(dqValue, vmp2.virtual_registers[idx]);
+
+	}
+
+	};
+
 	lifters lregq
 	{
 		vm::handler::LREGQ,
-		[](_cvmp2& vmp2, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param1, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param2, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param3) {
+		//
+		//param1(context index)
+		//
+		[](_cvmp2& vmp2, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param1) {
 
 		uint8_t idx = std::get<uint8_t>(param1) / 8;
 
@@ -335,7 +358,7 @@ namespace lifters {
 	lifters vmexit
 	{
 		vm::handler::VMEXIT,
-		[](_cvmp2& vmp2, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param1, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param2, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param3) {
+		[](_cvmp2& vmp2, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param1) {
 
 		auto iter = std::find_if(vmp2.vmctx.vm_handlers.begin(),vmp2.vmctx.vm_handlers.end(),[](vm::handler::handler_t h) {
 			if (h.profile->mnemonic == vm::handler::VMEXIT)
@@ -375,7 +398,7 @@ namespace lifters {
 		
 		vm::handler::LCONSTQ,
 		//param1 (const value to be loaded)
-		[](_cvmp2& vmp2, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param1, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param2, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param3)
+		[](_cvmp2& vmp2, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param1)
 		{
 		//sub rsp,8
 		vmp2.stack = vmp2.builder.CreateSub(vmp2.stack, ConstantInt::get(Type::getInt64Ty(vmp2.context), APInt(64, 8)));
@@ -388,21 +411,17 @@ namespace lifters {
 	lifters lconstdwsxq
 	{
 		vm::handler::LCONSTDWSXQ,
-		[](_cvmp2& vmp2, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param1, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param2, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param3)
+		//param1 (const value to be loaded (need sign extend))
+		[](_cvmp2& vmp2, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param1)
 		{
 			//TODO: 需要将数进行符号扩展
-
-			//sub rsp,8
-		vmp2.stack = vmp2.builder.CreateSub(vmp2.stack, ConstantInt::get(Type::getInt64Ty(vmp2.context), APInt(64, 8)));
-
-		vmp2.builder.CreateStore(ConstantInt::get(Type::getInt64Ty(vmp2.context), std::get<uint64_t>(param1)), vmp2.builder.CreateIntToPtr(vmp2.stack, PointerType::getInt64PtrTy(vmp2.context)));
 }
 	};
 
 	lifters readdw
 	{
 		vm::handler::READDW,
-		[](_cvmp2& vmp2, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param1, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param2, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param3)
+		[](_cvmp2& vmp2, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param1)
 		{
 			//mov     rax, [rbp+0]
 			auto readaddr = vmp2.builder.CreateLoad(Type::getInt64Ty(vmp2.context), vmp2.builder.CreateIntToPtr(vmp2.stack, PointerType::getInt64PtrTy(vmp2.context)),"readaddr");
@@ -423,7 +442,7 @@ namespace lifters {
 	lifters writedw
 	{
 		vm::handler::WRITEDW,
-		[](_cvmp2& vmp2, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param1, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param2, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param3)
+		[](_cvmp2& vmp2, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param1)
 		{
 
 			//mov     rax, [rsp]
@@ -444,13 +463,14 @@ namespace lifters {
 
 	std::map<vm::handler::mnemonic_t, lifters> _h_map
 	{
-		{vm::handler::SREGQ,sregq},
-		{vm::handler::LREGQ,lregq},
+		//{vm::handler::SREGQ,sregq},
+		//{vm::handler::LREGQ,lregq},
+		{vm::handler::SREGDW,sregdw},
 		{vm::handler::VMEXIT,vmexit},
-		{vm::handler::LCONSTQ,lconstq},
-		{vm::handler::LCONSTDWSXQ,lconstdwsxq},
-		{vm::handler::READDW,readdw},
-		{vm::handler::WRITEDW,writedw},
+		//{vm::handler::LCONSTQ,lconstq},
+		//{vm::handler::LCONSTDWSXQ,lconstq},
+		//{vm::handler::READDW,readdw},
+		//{vm::handler::WRITEDW,writedw},
 	};
 	
 
