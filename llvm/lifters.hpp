@@ -50,7 +50,7 @@ namespace lifters {
 		_cvmp2(LLVMContext& context, IRBuilder<>& builder, Module* llvm_module,vm::ctx_t& vmctx) :context(context), builder(builder), llvm_module(llvm_module),vmctx(vmctx) {
 
 			//void(*)(int64)
-			main = Function::Create(FunctionType::get(Type::getVoidTy(context), {Type::getInt64Ty(context)}, false), GlobalValue::LinkageTypes::ExternalLinkage, "main", *llvm_module);
+			main = Function::Create(FunctionType::get(Type::getVoidTy(context), {PointerType::getInt64Ty(context)}, false), GlobalValue::LinkageTypes::ExternalLinkage, "main", *llvm_module);
 
 			auto bb = BasicBlock::Create(context, "entry", main);
 			builder.SetInsertPoint(bb);
@@ -82,9 +82,7 @@ namespace lifters {
 					asm_str.append(buffer).append(";");
 				}
 			}
-
-			asm_str.append("mov rbp,rsp;");
-
+			//asm_str.append("mov rbp,rsp;");
 
 			llvm::InlineAsm* inlineAsm = llvm::InlineAsm::get(llvm::FunctionType::get(Type::getVoidTy(context), false), asm_str, "", false, false, llvm::InlineAsm::AD_Intel);
 
@@ -161,7 +159,11 @@ namespace lifters {
 
 			insert_asm_locally("mov rcx,rsp;");
 			// i64
-			stack = main->getArg(0); //get rcx
+			stack = main->getArg(0);
+			outs() << "[-]stack type : ";
+			stack->getType()->print(outs());
+			outs() << "\n";
+
 
 			//创建堆栈
 			
@@ -214,11 +216,13 @@ namespace lifters {
 
 			//some optimizes
 
+			fpm->add(llvm::createDeadStoreEliminationPass());
+			fpm->add(llvm::createGVNPass());
 			fpm->add(llvm::createPromoteMemoryToRegisterPass());
 			fpm->add(llvm::createInstructionCombiningPass());
 			fpm->add(llvm::createReassociatePass());
-			fpm->add(llvm::createGVNPass());
 			fpm->add(llvm::createCFGSimplificationPass());
+			fpm->add(llvm::createCorrelatedValuePropagationPass());
 			fpm->run(*main);
 		}
 
@@ -227,7 +231,7 @@ namespace lifters {
 		{
 			//enable optimize
 			
-			//add_optimize();
+			add_optimize();
 
 
 			std::string target_triple = llvm::sys::getDefaultTargetTriple();
@@ -276,7 +280,7 @@ namespace lifters {
 		std::unique_ptr<Module> llvm_module;
 		llvm::Function* main;
 		std::vector<AllocaInst*> virtual_registers;
-		Value* stack; 
+		Value* stack; //rcx
 		const vm::ctx_t& vmctx;
 		
 		
@@ -299,19 +303,32 @@ namespace lifters {
 
 		uint8_t idx = std::get<uint8_t>(param1) / 8;
 
-		//[rcx] [rsp]
-		Value* dqValue = vmp2.builder.CreateLoad(Type::getInt64Ty(vmp2.context), vmp2.builder.CreateIntToPtr(vmp2.stack, PointerType::getInt64PtrTy(vmp2.context)));
+		// mov x,[rcx]
+		Value* dqValue = vmp2.builder.CreateLoad(vmp2.builder.getInt64Ty(), vmp2.builder.CreateIntToPtr(vmp2.stack, PointerType::getInt64PtrTy(vmp2.context)));
 
-		if (!dqValue)
-			throw std::runtime_error("cant CreateLoad\n");
+		//mov vreg,x
+		vmp2.builder.CreateStore(dqValue, vmp2.virtual_registers[idx]);
 
-		//[ctx]=[rcx]
-		vmp2.builder.CreateStore(dqValue, vmp2.virtual_registers.at(idx));
+		//add rcx,8
+		vmp2.stack = vmp2.builder.CreateAdd(vmp2.stack, vmp2.builder.getInt64(8),"new_stack");
 
-		//add rsp(rcx) ,8
-		vmp2.stack = vmp2.builder.CreateAdd(vmp2.stack, ConstantInt::get(Type::getInt64Ty(vmp2.context), APInt(64, 8)));
-		
-	
+	}
+	};
+
+	lifters lregq
+	{
+		vm::handler::LREGQ,
+		[](_cvmp2& vmp2, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param1, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param2, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param3) {
+
+		uint8_t idx = std::get<uint8_t>(param1) / 8;
+
+		//sub rsp,8
+		vmp2.stack = vmp2.builder.CreateSub(vmp2.stack, ConstantInt::get(Type::getInt64Ty(vmp2.context), APInt(64, 8)));
+
+		//mov [rsp],[ctx]
+		Value* dqValue = vmp2.builder.CreateLoad(Type::getInt64Ty(vmp2.context),vmp2.virtual_registers.at(idx));
+		vmp2.builder.CreateStore(dqValue, vmp2.builder.CreateIntToPtr(vmp2.stack,PointerType::getInt64PtrTy(vmp2.context)));
+
 	}
 	};
 
@@ -360,7 +377,10 @@ namespace lifters {
 		//param1 (const value to be loaded)
 		[](_cvmp2& vmp2, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param1, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param2, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param3)
 		{
-		
+		//sub rsp,8
+		vmp2.stack = vmp2.builder.CreateSub(vmp2.stack, ConstantInt::get(Type::getInt64Ty(vmp2.context), APInt(64, 8)));
+
+		vmp2.builder.CreateStore(ConstantInt::get(Type::getInt64Ty(vmp2.context), std::get<uint64_t>(param1)), vmp2.builder.CreateIntToPtr(vmp2.stack, PointerType::getInt64PtrTy(vmp2.context)));
 			
 		}
 	};
@@ -370,6 +390,12 @@ namespace lifters {
 		vm::handler::LCONSTDWSXQ,
 		[](_cvmp2& vmp2, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param1, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param2, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param3)
 		{
+			//TODO: 需要将数进行符号扩展
+
+			//sub rsp,8
+		vmp2.stack = vmp2.builder.CreateSub(vmp2.stack, ConstantInt::get(Type::getInt64Ty(vmp2.context), APInt(64, 8)));
+
+		vmp2.builder.CreateStore(ConstantInt::get(Type::getInt64Ty(vmp2.context), std::get<uint64_t>(param1)), vmp2.builder.CreateIntToPtr(vmp2.stack, PointerType::getInt64PtrTy(vmp2.context)));
 }
 	};
 
@@ -378,6 +404,18 @@ namespace lifters {
 		vm::handler::READDW,
 		[](_cvmp2& vmp2, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param1, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param2, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param3)
 		{
+			//mov     rax, [rbp+0]
+			auto readaddr = vmp2.builder.CreateLoad(Type::getInt64Ty(vmp2.context), vmp2.builder.CreateIntToPtr(vmp2.stack, PointerType::getInt64PtrTy(vmp2.context)),"readaddr");
+
+
+			//add     rbp, 4
+			vmp2.stack = vmp2.builder.CreateAdd(vmp2.stack, ConstantInt::get(Type::getInt64Ty(vmp2.context), APInt(64, 4)));
+
+			//转换成dword ptr
+			auto ptr = vmp2.builder.CreateIntToPtr(readaddr, PointerType::getInt32PtrTy(vmp2.context),"readaddr_ptr");
+			Value* dwValue = vmp2.builder.CreateLoad(vmp2.builder.getInt32Ty(),ptr);
+		
+			vmp2.builder.CreateStore(dwValue, vmp2.builder.CreateIntToPtr(vmp2.stack, PointerType::getInt32PtrTy(vmp2.context)));
 
 	}
 	};
@@ -388,12 +426,26 @@ namespace lifters {
 		[](_cvmp2& vmp2, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param1, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param2, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param3)
 		{
 
+			//mov     rax, [rsp]
+			auto writeaddr = vmp2.builder.CreateLoad(Type::getInt64Ty(vmp2.context), vmp2.builder.CreateIntToPtr(vmp2.stack, PointerType::getInt64PtrTy(vmp2.context)));
+
+			//[rbp+8]
+			auto ptr1 = vmp2.builder.CreateAdd(vmp2.stack, ConstantInt::get(Type::getInt64Ty(vmp2.context), APInt(64, 8)));
+			auto dwValue = vmp2.builder.CreateLoad(Type::getInt32Ty(vmp2.context),vmp2.builder.CreateIntToPtr(ptr1, PointerType::getInt32PtrTy(vmp2.context)));
+
+			//add rbp ,0xC
+			vmp2.stack = vmp2.builder.CreateAdd(vmp2.stack, ConstantInt::get(Type::getInt64Ty(vmp2.context), APInt(64, 0xC)));
+
+			vmp2.builder.CreateStore(dwValue, vmp2.builder.CreateIntToPtr(writeaddr, PointerType::getInt32PtrTy(vmp2.context)));
+
+
 	}
 	};
 
 	std::map<vm::handler::mnemonic_t, lifters> _h_map
 	{
 		{vm::handler::SREGQ,sregq},
+		{vm::handler::LREGQ,lregq},
 		{vm::handler::VMEXIT,vmexit},
 		{vm::handler::LCONSTQ,lconstq},
 		{vm::handler::LCONSTDWSXQ,lconstdwsxq},
