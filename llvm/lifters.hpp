@@ -23,6 +23,7 @@
 #include <llvm/Passes/PassBuilder.h>
 #include <llvm/IR/InlineAsm.h>
 #include <llvm/Support/Alignment.h>
+#include <llvm/IR/Attributes.h>
 
 //for x86 complie
 #include <llvm/Support/Host.h>
@@ -52,8 +53,14 @@ namespace lifters {
 			//void(*)(int64)
 			main = Function::Create(FunctionType::get(Type::getVoidTy(context), {PointerType::getInt64Ty(context)}, false), GlobalValue::LinkageTypes::ExternalLinkage, "main", *llvm_module);
 
-			auto bb = BasicBlock::Create(context, "entry", main);
-			builder.SetInsertPoint(bb);
+			//
+			//
+			//
+			main->addFnAttr(Attribute::AlwaysInline);
+			main->addFnAttr(Attribute::NoUnwind);
+
+			auto block_vmentry = BasicBlock::Create(context, "block_vmentry", main);
+			builder.SetInsertPoint(block_vmentry);
 
 			//
 		    //vm-entry的时候会push很多常用寄存器,同样也会不断的调用stregq到context中
@@ -82,13 +89,11 @@ namespace lifters {
 					asm_str.append(buffer).append(";");
 				}
 			}
-			//asm_str.append("mov rbp,rsp;");
+			asm_str.append("mov rcx,rsp;");
 
 			llvm::InlineAsm* inlineAsm = llvm::InlineAsm::get(llvm::FunctionType::get(Type::getVoidTy(context), false), asm_str, "", false, false, llvm::InlineAsm::AD_Intel);
 
-			//insert asm 
 			builder.CreateCall(inlineAsm);
-
 
 			//
 			//mov     [rax+rdi], rdx(rax最大已知0xb8)
@@ -149,6 +154,10 @@ namespace lifters {
 
 			*/
 
+			auto block_main = BasicBlock::Create(context, "block_main", main);
+			
+			builder.CreateBr(block_main);
+			builder.SetInsertPoint(block_main);
 
 			for (int i = 0; i < 24; ++i) 
 			{
@@ -157,7 +166,6 @@ namespace lifters {
 				//builder.CreateStore(ConstantInt::get(Type::getInt64Ty(context), APInt(64, i)), virtual_registers[i]);
 			}
 
-			insert_asm_locally("mov rcx,rsp;");
 			// i64
 			stack = main->getArg(0);
 			outs() << "[-]stack type : ";
@@ -231,7 +239,7 @@ namespace lifters {
 		{
 			//enable optimize
 			
-			//add_optimize();
+			add_optimize();
 
 
 			std::string target_triple = llvm::sys::getDefaultTargetTriple();
@@ -530,17 +538,17 @@ namespace lifters {
 
 	std::map<vm::handler::mnemonic_t, lifters> _h_map
 	{
-		//{vm::handler::SREGQ,sregq},
-		//{vm::handler::LREGQ,lregq},
-		//{vm::handler::SREGDW,sregdw},
-		//{vm::handler::LREGDW,lregdw},
-		//{vm::handler::LCONSTDW,lconstdw},
-		//{vm::handler::LCONSTBSXDW,lconstdw},
-		//{vm::handler::LCONSTWSXDW,lconstdw},
-		//{vm::handler::LCONSTQ,lconstq},
-		//{vm::handler::LCONSTDWSXQ,lconstq},
-		//{vm::handler::READDW,readdw},
-		//{vm::handler::WRITEDW,writedw},
+		{vm::handler::SREGQ,sregq},
+		{vm::handler::LREGQ,lregq},
+		{vm::handler::SREGDW,sregdw},
+		{vm::handler::LREGDW,lregdw},
+		{vm::handler::LCONSTDW,lconstdw},
+		{vm::handler::LCONSTBSXDW,lconstdw},
+		{vm::handler::LCONSTWSXDW,lconstdw},
+		{vm::handler::LCONSTQ,lconstq},
+		{vm::handler::LCONSTDWSXQ,lconstq},
+		{vm::handler::READDW,readdw},
+		{vm::handler::WRITEDW,writedw},
 		{vm::handler::ADDQ,addq},
 		{vm::handler::VMEXIT,vmexit},
 	};
