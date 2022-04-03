@@ -24,6 +24,8 @@
 #include <llvm/IR/InlineAsm.h>
 #include <llvm/Support/Alignment.h>
 #include <llvm/IR/Attributes.h>
+#include <llvm/Transforms/IPO.h>
+#include <llvm/Transforms/Utils/Cloning.h>
 
 //for x86 complie
 #include <llvm/Support/Host.h>
@@ -50,16 +52,19 @@ namespace lifters {
 	public:
 		_cvmp2(LLVMContext& context, IRBuilder<>& builder, Module* llvm_module,vm::ctx_t& vmctx) :context(context), builder(builder), llvm_module(llvm_module),vmctx(vmctx) {
 
-			//void(*)(int64)
-			main = Function::Create(FunctionType::get(Type::getVoidTy(context), {PointerType::getInt64Ty(context)}, false), GlobalValue::LinkageTypes::ExternalLinkage, "main", *llvm_module);
+			//void(*)(void)
+			main = Function::Create(FunctionType::get(Type::getVoidTy(context), {builder.getInt64Ty()}, false), GlobalValue::LinkageTypes::ExternalLinkage, "main", *llvm_module);
+
+			vm_entry = Function::Create(FunctionType::get(Type::getVoidTy(context), {}, false), GlobalValue::LinkageTypes::ExternalLinkage, "vm_entry", *llvm_module);
+
+			vm_exit = Function::Create(FunctionType::get(Type::getVoidTy(context), {}, false), GlobalValue::LinkageTypes::ExternalLinkage, "vm_exit", *llvm_module);
 
 			//
+			//main->addFnAttr(Attribute::Naked);
+			//main->addFnAttr(Attribute::OptimizeNone); 
 			//
-			//
-			main->addFnAttr(Attribute::AlwaysInline);
-			main->addFnAttr(Attribute::NoUnwind);
 
-			auto block_vmentry = BasicBlock::Create(context, "block_vmentry", main);
+			auto block_vmentry = BasicBlock::Create(context, "entry", vm_entry);
 			builder.SetInsertPoint(block_vmentry);
 
 			//
@@ -94,7 +99,7 @@ namespace lifters {
 			llvm::InlineAsm* inlineAsm = llvm::InlineAsm::get(llvm::FunctionType::get(Type::getVoidTy(context), false), asm_str, "", false, false, llvm::InlineAsm::AD_Intel);
 
 			builder.CreateCall(inlineAsm);
-
+			builder.CreateRetVoid();
 			//
 			//mov     [rax+rdi], rdx(rax最大已知0xb8)
 			//0xb8/8+1 = 24  创建24个8字节虚拟寄存器
@@ -154,17 +159,21 @@ namespace lifters {
 
 			*/
 
-			auto block_main = BasicBlock::Create(context, "block_main", main);
+			auto block_main = BasicBlock::Create(context, "entry", main);
 			
-			builder.CreateBr(block_main);
-			builder.SetInsertPoint(block_main);
+			builder.SetInsertPoint(block_main); 
 
-			for (int i = 0; i < 24; ++i) 
+			for (int i = 0; i < 24; ++i)
 			{
 				virtual_registers.push_back(builder.CreateAlloca(llvm::IntegerType::get(context, 64), nullptr, (std::string("vreg") + std::to_string(i)).c_str()));
 
 				//builder.CreateStore(ConstantInt::get(Type::getInt64Ty(context), APInt(64, i)), virtual_registers[i]);
 			}
+
+			auto vm_entry_inst = builder.CreateCall(vm_entry);
+
+			InlineFunctionInfo ifi;
+			InlineFunction(*vm_entry_inst, ifi);
 
 			// i64
 			stack = main->getArg(0);
@@ -222,6 +231,8 @@ namespace lifters {
 		{
 			std::unique_ptr<llvm::legacy::FunctionPassManager> fpm = std::make_unique<llvm::legacy::FunctionPassManager>(&(*llvm_module));
 
+
+
 			//some optimizes
 
 			fpm->add(llvm::createDeadStoreEliminationPass());
@@ -232,6 +243,8 @@ namespace lifters {
 			fpm->add(llvm::createCFGSimplificationPass());
 			fpm->add(llvm::createCorrelatedValuePropagationPass());
 			fpm->run(*main);
+			
+
 		}
 
 		//https://releases.llvm.org/8.0.0/docs/tutorial/LangImpl08.html#full-code-listing
@@ -286,6 +299,8 @@ namespace lifters {
 		LLVMContext& context;
 		IRBuilder<>& builder;
 		std::unique_ptr<Module> llvm_module;
+		llvm::Function* vm_entry;
+		llvm::Function* vm_exit;
 		llvm::Function* main;
 		std::vector<AllocaInst*> virtual_registers;
 		Value* stack; //rcx
@@ -488,7 +503,7 @@ namespace lifters {
 	}
 	};
 
-	lifters writedw
+	lifters writedw //
 	{
 		vm::handler::WRITEDW,
 		[](_cvmp2& vmp2, std::variant<uint64_t, uint32_t, uint16_t, uint8_t> param1)
@@ -508,6 +523,11 @@ namespace lifters {
 
 
 	}
+	};
+
+	lifters writeq
+	{
+
 	};
 
 
@@ -538,13 +558,14 @@ namespace lifters {
 
 	std::map<vm::handler::mnemonic_t, lifters> _h_map
 	{
+
 		{vm::handler::SREGQ,sregq},
 		{vm::handler::LREGQ,lregq},
 		{vm::handler::SREGDW,sregdw},
 		{vm::handler::LREGDW,lregdw},
-		{vm::handler::LCONSTDW,lconstdw},
-		{vm::handler::LCONSTBSXDW,lconstdw},
-		{vm::handler::LCONSTWSXDW,lconstdw},
+		{vm::handler::LCONSTDW,lconstdw},  
+		{vm::handler::LCONSTBSXDW,lconstdw}, 
+		{vm::handler::LCONSTWSXDW,lconstdw}, 
 		{vm::handler::LCONSTQ,lconstq},
 		{vm::handler::LCONSTDWSXQ,lconstq},
 		{vm::handler::READDW,readdw},
