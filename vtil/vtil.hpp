@@ -91,17 +91,7 @@ vm::handler::SREGB,
 				blk->pop(t1);
 				blk->mov(t2, t1);
 				blk->add(t1, t0);
-				blk->tl(FLAG_SF, t1, 0)->
-					te(FLAG_ZF, t1, 0)->
-					tul(FLAG_CF, t1, t2)->
-					tl(b2, t2, 0)->
-					tl(b3, t0, 0)->
-					te(b0, b2, b3)->
-					tl(b2, t2, 0)->
-					tl(b3, t1, 0)->
-					tne(b1, b2, b3)->
-					mov(FLAG_OF, b0)->
-					band(FLAG_OF, b1)->push(t1)->pushf();
+				blk->push(t1)->pushf();
 			} };
 
 		lifter_t addw = {
@@ -113,17 +103,7 @@ vm::handler::SREGB,
 		blk->pop(t1);
 		blk->mov(t2, t1);
 		blk->add(t1, t0);
-		blk->tl(FLAG_SF, t1, 0)->
-			te(FLAG_ZF, t1, 0)->
-			tul(FLAG_CF, t1, t2)->
-			tl(b2, t2, 0)->
-			tl(b3, t0, 0)->
-			te(b0, b2, b3)->
-			tl(b2, t2, 0)->
-			tl(b3, t1, 0)->
-			tne(b1, b2, b3)->
-			mov(FLAG_OF, b0)->
-			band(FLAG_OF, b1)->push(t1)->pushf();
+		blk->push(t1)->pushf();
 	} };
 
 
@@ -195,10 +175,6 @@ vm::handler::SREGB,
 				blk->bnot(t0);
 				blk->bnot(t1);
 				blk->bor(t0, t1);
-				blk->tl(FLAG_SF, t0, 0);
-				blk->te(FLAG_ZF, t0, 0);
-				blk->mov(FLAG_OF, 0);
-				blk->mov(FLAG_CF, 0);
 				blk->push(t0);
 				blk->pushf();
 
@@ -214,10 +190,6 @@ vm::handler::SREGB,
 		blk->bnot(t0);
 		blk->bnot(t1);
 		blk->bor(t0, t1);
-		blk->tl(FLAG_SF, t0, 0);
-		blk->te(FLAG_ZF, t0, 0);
-		blk->mov(FLAG_OF, 0);
-		blk->mov(FLAG_CF, 0);
 		blk->push(t0);
 		blk->pushf();
 
@@ -231,10 +203,6 @@ vm::handler::SREGB,
 		blk->bnot(t0);
 		blk->bnot(t1);
 		blk->bor(t0, t1);
-		blk->tl(FLAG_SF, t0, 0);
-		blk->te(FLAG_ZF, t0, 0);
-		blk->mov(FLAG_OF, 0);
-		blk->mov(FLAG_CF, 0);
 		blk->push(t0);
 		blk->pushf();
 
@@ -270,8 +238,7 @@ vm::handler::SREGB,
 		auto ofx = t0;
 		ofx.bit_offset = ofx.bit_count - 1;
 		ofx.bit_count = 1;
-		blk->pop(t0)->pop(t2)->mov(t1, t0)->bshr(t0, t2)->tl(FLAG_SF, t0, 0)->te(FLAG_ZF, t0, 0)->mov(FLAG_OF, ofx)->mov(FLAG_CF, cf)
-			->bxor(FLAG_OF, cf)->push(t0)->pushf();
+		blk->pop(t0)->pop(t2)->mov(t1, t0)->bshr(t0, t2)->push(t0)->pushf();
 	}
 		};
 		lifter_t shrw{
@@ -284,8 +251,7 @@ vm::handler::SREGB,
 				auto ofx = t0;
 				ofx.bit_offset = ofx.bit_count - 1;
 				ofx.bit_count = 1;
-				blk->pop(t0)->pop(t2)->mov(t1, t0)->bshr(t0, t2)->tl(FLAG_SF, t0, 0)->te(FLAG_ZF, t0, 0)->mov(FLAG_OF, ofx)->mov(FLAG_CF, cf)
-					->bxor(FLAG_OF, cf)->push(t0)->pushf();
+				blk->pop(t0)->pop(t2)->mov(t1, t0)->bshr(t0, t2)->push(t0)->pushf();
 			}
 		};
 
@@ -299,8 +265,7 @@ vm::handler::SREGB,
 		auto ofx = t0;
 		ofx.bit_offset = ofx.bit_count - 1;
 		ofx.bit_count = 1;
-		blk->pop(t0)->pop(t2)->mov(t1, t0)->bshr(t0, t2)->tl(FLAG_SF, t0, 0)->te(FLAG_ZF, t0, 0)->mov(FLAG_OF, ofx)->mov(FLAG_CF, cf)
-			->bxor(FLAG_OF, cf)->push(t0)->pushf();
+		blk->pop(t0)->pop(t2)->mov(t1, t0)->bshr(t0, t2)->push(t0)->pushf();
 	}
 		};
 
