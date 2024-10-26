@@ -36,6 +36,15 @@ namespace lifters {
 			std::function<void(vtil::basic_block* blk, vm::instrs::virt_instr_t* vinstr, vmp2::v3::code_block_t* code_blk)> func;
 		};
 
+		lifter_t lconstbzxq = {
+			vm::handler::LCONSTBSXQ,
+			[](vtil::basic_block* blk, vm::instrs::virt_instr_t* vinstr, vmp2::v3::code_block_t* code_blk) {
+				
+				int32_t t = (int32_t)vinstr->operand.imm.u;  // 截断
+				// 符号扩展?
+				blk->push(vtil::operand(static_cast<int64_t>(t), 64));
+			}
+		};
 
 		lifter_t lconstq = {
 			// push imm<N>
@@ -44,52 +53,26 @@ namespace lifters {
 				blk->push(vtil::operand(vinstr->operand.imm.u, 64));
 			} };
 
-		lifter_t lconstdw = {
-			// push imm<N>
-			vm::handler::LCONSTDW,
-			[](vtil::basic_block* blk, vm::instrs::virt_instr_t* vinstr, vmp2::v3::code_block_t* code_blk) {
-				blk->push(vtil::operand(vinstr->operand.imm.u, 32));
-			} };
-
-		lifter_t lconstbzxw{
-	vm::handler::LCONSTBZXW,
-	[](vtil::basic_block* blk, vm::instrs::virt_instr_t* vinstr, vmp2::v3::code_block_t* code_blk) {
-				blk->push(vtil::operand(vinstr->operand.imm.u, 16));
-}
-		};
-
 		lifter_t sregq = {
 			vm::handler::SREGQ,
 			[](vtil::basic_block* blk, vm::instrs::virt_instr_t* vinstr, vmp2::v3::code_block_t* code_blk) {
-				blk->pop(make_virtual_register(vinstr->operand.imm.u,vinstr->operand.imm.imm_size));
+				blk->pop(make_virtual_register(vinstr->operand.imm.u,8));
 			} };
 
-		lifter_t sregw = {
-		vm::handler::SREGW,
-		[](vtil::basic_block* blk, vm::instrs::virt_instr_t* vinstr, vmp2::v3::code_block_t* code_blk) {
-			blk->pop(make_virtual_register(vinstr->operand.imm.u,vinstr->operand.imm.imm_size));
-		} };
-
 		lifter_t sregdw = {
-	vm::handler::SREGDW,
-	[](vtil::basic_block* blk, vm::instrs::virt_instr_t* vinstr, vmp2::v3::code_block_t* code_blk) {
-		blk->pop(make_virtual_register(vinstr->operand.imm.u,vinstr->operand.imm.imm_size));
-	} };
-
-		lifter_t sregb = {
-vm::handler::SREGB,
-[](vtil::basic_block* blk, vm::instrs::virt_instr_t* vinstr, vmp2::v3::code_block_t* code_blk) {
-	blk->pop(make_virtual_register(vinstr->operand.imm.u,vinstr->operand.imm.imm_size));
-} };
+			vm::handler::SREGDW,
+			sregq.func };
+		
+		lifter_t sregw = {
+			vm::handler::SREGW,
+			sregq.func };
 	
 		lifter_t addq = {
 			vm::handler::ADDQ,
 			[](vtil::basic_block* blk, vm::instrs::virt_instr_t* vinstr, vmp2::v3::code_block_t* code_blk) {
-				auto [t0, t1, t2] = blk->tmp(64, 64, 64);
-				auto [b0, b1, b2, b3] = blk->tmp(1, 1, 1, 1);
+				auto [t0, t1] = blk->tmp(64, 64);
 				blk->pop(t0);
 				blk->pop(t1);
-				blk->mov(t2, t1);
 				blk->add(t1, t0);
 				blk->push(t1)->pushf();
 			} };
@@ -97,194 +80,124 @@ vm::handler::SREGB,
 		lifter_t addw = {
 	vm::handler::ADDW,
 	[](vtil::basic_block* blk, vm::instrs::virt_instr_t* vinstr, vmp2::v3::code_block_t* code_blk) {
-		auto [t0, t1, t2] = blk->tmp(16, 16, 16);
-		auto [b0, b1, b2, b3] = blk->tmp(1, 1, 1, 1);
-		blk->pop(t0);
-		blk->pop(t1);
-		blk->mov(t2, t1);
-		blk->add(t1, t0);
-		blk->push(t1)->pushf();
-	} };
+				auto [t0, t1] = blk->tmp(32, 32);
+				blk->pop(t0);
+				blk->pop(t1);
+				blk->add(t1, t0);
+				blk->push(t1)->pushf();
+			} };
+
+
 
 
 		lifter_t lregq = {
 			vm::handler::LREGQ,
 			[](vtil::basic_block* blk, vm::instrs::virt_instr_t* vinstr, vmp2::v3::code_block_t* code_blk) {
 				auto stack_top_value = blk->tmp(64);  // 栈上的值
-				blk->pop(stack_top_value);
-				blk->mov(make_virtual_register(vinstr->operand.imm.u,vinstr->operand.imm.imm_size), stack_top_value);
+				blk->mov(stack_top_value, make_virtual_register(vinstr->operand.imm.u, 8));  // 虚拟寄存器都是8字节
+				blk->push(stack_top_value);
 			}
 		};
 		lifter_t lregdw = {
-	vm::handler::LREGDW,
-	[](vtil::basic_block* blk, vm::instrs::virt_instr_t* vinstr, vmp2::v3::code_block_t* code_blk) {
-		auto stack_top_value = blk->tmp(64);  // 栈上的值
-				blk->pop(stack_top_value);
-				blk->mov(make_virtual_register(vinstr->operand.imm.u,vinstr->operand.imm.imm_size), stack_top_value);
-	}
-		};
-		lifter_t lregw = {
-			vm::handler::LREGW,
+			vm::handler::LREGDW,
 			[](vtil::basic_block* blk, vm::instrs::virt_instr_t* vinstr, vmp2::v3::code_block_t* code_blk) {
-				auto stack_top_value = blk->tmp(16);  // 栈上的值
-				blk->pop(stack_top_value);
-				blk->mov(make_virtual_register(vinstr->operand.imm.u,vinstr->operand.imm.imm_size), stack_top_value);
+				auto stack_top_value = blk->tmp(32);  // 栈上的值
+				blk->mov(stack_top_value, make_virtual_register(vinstr->operand.imm.u, 8));
+				blk->push(stack_top_value);
 			}
 		};
 
-		lifter_t readw{
-			vm::handler::READW,
+		lifter_t readq{
+			vm::handler::READQ,
 			[](vtil::basic_block* blk, vm::instrs::virt_instr_t* vinstr, vmp2::v3::code_block_t* code_blk) {
-				auto [t0, t1] = blk->tmp(64,16);
+				auto [t0, t1] = blk->tmp(64,64);
 				blk->pop(t0);
 				blk->ldd(t1, t0, vtil::make_imm(0ull));
 				blk->push(t1);
 			}
 		};
-
-		lifter_t readb{
-	vm::handler::READB,
-	[](vtil::basic_block* blk, vm::instrs::virt_instr_t* vinstr, vmp2::v3::code_block_t* code_blk) {
-		auto [t0, t1] = blk->tmp(64,8);
-		blk->pop(t0);
-		blk->ldd(t1, t0, vtil::make_imm(0ull));
-		blk->push(t1);
-	}
-		};
-
-		lifter_t readdw{
-		vm::handler::READDW,
-		[](vtil::basic_block* blk, vm::instrs::virt_instr_t* vinstr, vmp2::v3::code_block_t* code_blk) {
-			auto [t0, t1] = blk->tmp(64,32);
-			blk->pop(t0);
-			blk->ldd(t1, t0, vtil::make_imm(0ull));
-			blk->push(t1);
-		}
-		};
-
-		lifter_t readq{
-	vm::handler::READQ,
-	[](vtil::basic_block* blk, vm::instrs::virt_instr_t* vinstr, vmp2::v3::code_block_t* code_blk) {
-		auto [t0, t1] = blk->tmp(64,64);
-		blk->pop(t0);
-		blk->ldd(t1, t0, vtil::make_imm(0ull));
-		blk->push(t1);
-	}
+		/*
+ | | 0054: [ PSEUDO ]     -0x28    strq     $sp          -0x28        0x1f
+ | | 0055: [ PSEUDO ]     -0x20    lddq     t4           $sp          -0x28
+ | | 0056: [ PSEUDO ]     -0x20    lddw     t3:16        t4           0x0
+ | | 0057: [ PSEUDO ]     -0x22    strw     $sp          -0x22        t3:16
+		*/
+		lifter_t readw{
+			vm::handler::READW,
+			[](vtil::basic_block* blk, vm::instrs::virt_instr_t* vinstr, vmp2::v3::code_block_t* code_blk) {
+				auto [t0, t1] = blk->tmp(64,16);
+				blk->pop(t0); // 拿出地址
+				blk->ldd(t1, t0, vtil::make_imm(0ull));
+				blk->push(t1);
+			}
 		};
 
 		lifter_t nandq{
 			vm::handler::NANDQ,
 			[](vtil::basic_block* blk, vm::instrs::virt_instr_t* vinstr, vmp2::v3::code_block_t* code_blk) {
 				auto [t0, t1] = blk->tmp(64, 64);
-				blk->pop(t0);
-				blk->pop(t1);
-				blk->bnot(t0);
-				blk->bnot(t1);
-				blk->bor(t0, t1);
+				blk->pop(t0);  // mov     rax, [rbp+0]  
+				blk->pop(t1);  // mov     rdx, [rbp+8]
+				blk->bnot(t1); // not rdx
+				blk->bnot(t0); // not rax
+				blk->band(t0, t1); // and rax,rdx
 				blk->push(t0);
 				blk->pushf();
 
 			}
 		};
 
-		lifter_t nandw{
-	vm::handler::NANDW,
-	[](vtil::basic_block* blk, vm::instrs::virt_instr_t* vinstr, vmp2::v3::code_block_t* code_blk) {
-		auto [t0, t1] = blk->tmp(16, 16);
-		blk->pop(t0);
-		blk->pop(t1);
-		blk->bnot(t0);
-		blk->bnot(t1);
-		blk->bor(t0, t1);
-		blk->push(t0);
-		blk->pushf();
-
-	}
-		};		lifter_t nanddw{
-	vm::handler::NANDDW,
-	[](vtil::basic_block* blk, vm::instrs::virt_instr_t* vinstr, vmp2::v3::code_block_t* code_blk) {
-		auto [t0, t1] = blk->tmp(32, 32);
-		blk->pop(t0);
-		blk->pop(t1);
-		blk->bnot(t0);
-		blk->bnot(t1);
-		blk->bor(t0, t1);
-		blk->push(t0);
-		blk->pushf();
-
-	}
+		lifter_t nanddw{
+		vm::handler::NANDDW,
 		};
+
+		lifter_t nandw{
+			vm::handler::NANDW,
+		};		
+		
 
 		lifter_t writeq{
 			vm::handler::WRITEQ,
-			[](vtil::basic_block* blk, vm::instrs::virt_instr_t* vinstr, vmp2::v3::code_block_t* code_blk) {
-				auto [t0, t1] = blk->tmp(64, 64);
-				blk->pop(t0);
-				blk->pop(t1);
-				blk->str(t0, vtil::make_imm(0ull), t1);
-			}
 		};
 
 		lifter_t writew{
-	vm::handler::WRITEW,
-	[](vtil::basic_block* blk, vm::instrs::virt_instr_t* vinstr, vmp2::v3::code_block_t* code_blk) {
-		auto [t0, t1] = blk->tmp(64, 32);
-		blk->pop(t0);
-		blk->pop(t1);
-		blk->str(t0, vtil::make_imm(0ull), t1);
-	}
+			vm::handler::WRITEW,
 		};
+		
+		
 		lifter_t shrq{
-	vm::handler::SHRQ,
-	[](vtil::basic_block* blk, vm::instrs::virt_instr_t* vinstr, vmp2::v3::code_block_t* code_blk) {
-		auto [t0, t1, t2] = blk->tmp(64, 64, 8);
-		auto cf = t1;
-		cf.bit_offset = cf.bit_count - 1; cf.bit_count = 1;
-		cf.bit_count = 1;
-		auto ofx = t0;
-		ofx.bit_offset = ofx.bit_count - 1;
-		ofx.bit_count = 1;
-		blk->pop(t0)->pop(t2)->mov(t1, t0)->bshr(t0, t2)->push(t0)->pushf();
-	}
+			vm::handler::SHRQ,
 		};
+
+
 		lifter_t shrw{
 			vm::handler::SHRW,
-			[](vtil::basic_block* blk, vm::instrs::virt_instr_t* vinstr, vmp2::v3::code_block_t* code_blk) {
-				auto [t0, t1, t2] = blk->tmp(16, 16, 8);
-				auto cf = t1;
-				cf.bit_offset = cf.bit_count - 1; cf.bit_count = 1;
-				cf.bit_count = 1;
-				auto ofx = t0;
-				ofx.bit_offset = ofx.bit_count - 1;
-				ofx.bit_count = 1;
-				blk->pop(t0)->pop(t2)->mov(t1, t0)->bshr(t0, t2)->push(t0)->pushf();
-			}
 		};
 
 		lifter_t shrb{
-	vm::handler::SHRB,
-	[](vtil::basic_block* blk, vm::instrs::virt_instr_t* vinstr, vmp2::v3::code_block_t* code_blk) {
-		auto [t0, t1, t2] = blk->tmp(8, 8, 8);
-		auto cf = t1;
-		cf.bit_offset = cf.bit_count - 1; cf.bit_count = 1;
-		cf.bit_count = 1;
-		auto ofx = t0;
-		ofx.bit_offset = ofx.bit_count - 1;
-		ofx.bit_count = 1;
-		blk->pop(t0)->pop(t2)->mov(t1, t0)->bshr(t0, t2)->push(t0)->pushf();
-	}
+			vm::handler::SHRB,
+		};
+
+		/*
+ | | 0054: [ PSEUDO ]     -0x20    movq     t3           $sp
+ | | 0055: [ PSEUDO ]     -0x28    strq     $sp          -0x28        t3
+		*/
+		lifter_t pushvspq{
+			vm::handler::PUSHVSPQ,
+			[](vtil::basic_block* blk, vm::instrs::virt_instr_t* vinstr, vmp2::v3::code_block_t* code_blk) {
+				blk->push(vtil::REG_SP);
+		}
 		};
 
 
 	lifter_t LiftersArray[] = {
-		lconstq,lconstbzxw,lconstdw,
-		sregq,sregw,sregdw,sregb,
-		addq,addw,
-		lregq,lregw,lregdw,
-		readw,readb,readdw,readq,
-		nandq,nandw,nanddw,
-		writeq,writew,
-		shrw,shrb,shrq,
+		lconstbzxq,lconstq,
+		sregq,
+		addq,
+		lregq,
+		pushvspq,
+		readq,readw,
+		nandq,
 	};
 
 
