@@ -110,19 +110,25 @@ vm::handler::SREGB,
 		lifter_t lregq = {
 			vm::handler::LREGQ,
 			[](vtil::basic_block* blk, vm::instrs::virt_instr_t* vinstr, vmp2::v3::code_block_t* code_blk) {
-				blk->pop(make_virtual_register(vinstr->operand.imm.u,vinstr->operand.imm.imm_size));
+				auto stack_top_value = blk->tmp(64);  // 栈上的值
+				blk->pop(stack_top_value);
+				blk->mov(make_virtual_register(vinstr->operand.imm.u,vinstr->operand.imm.imm_size), stack_top_value);
 			}
 		};
 		lifter_t lregdw = {
 	vm::handler::LREGDW,
 	[](vtil::basic_block* blk, vm::instrs::virt_instr_t* vinstr, vmp2::v3::code_block_t* code_blk) {
-		blk->pop(make_virtual_register(vinstr->operand.imm.u,vinstr->operand.imm.imm_size));
+		auto stack_top_value = blk->tmp(64);  // 栈上的值
+				blk->pop(stack_top_value);
+				blk->mov(make_virtual_register(vinstr->operand.imm.u,vinstr->operand.imm.imm_size), stack_top_value);
 	}
 		};
 		lifter_t lregw = {
 			vm::handler::LREGW,
 			[](vtil::basic_block* blk, vm::instrs::virt_instr_t* vinstr, vmp2::v3::code_block_t* code_blk) {
-				blk->pop(make_virtual_register(vinstr->operand.imm.u,vinstr->operand.imm.imm_size));
+				auto stack_top_value = blk->tmp(16);  // 栈上的值
+				blk->pop(stack_top_value);
+				blk->mov(make_virtual_register(vinstr->operand.imm.u,vinstr->operand.imm.imm_size), stack_top_value);
 			}
 		};
 
